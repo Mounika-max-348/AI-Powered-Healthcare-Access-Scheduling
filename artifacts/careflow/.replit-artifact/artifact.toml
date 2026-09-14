@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "CareFlow Access Platform"
+description = "A production-style healthcare access platform for multi-hospital patient intake, scheduling, verified booking, pre-visit workflows, and operational visibility."
+version = "1.0.0"
+id = "artifacts/careflow"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18088
+
+[services.development]
+run = "pnpm --filter @workspace/careflow run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/careflow", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/careflow/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18088"
+BASE_PATH = "/"

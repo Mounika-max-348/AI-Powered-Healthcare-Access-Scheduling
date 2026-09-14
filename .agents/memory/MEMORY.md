@@ -1,0 +1,1 @@
+- [Workspace build constraints](workspace-build-constraints.md) — generated client types need DOM iterable libs; Vite artifacts need safe local build defaults for PORT/BASE_PATH.

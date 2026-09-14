@@ -1,22 +1,21 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: CareFlow Access Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: demo
+    description: Evaluator-facing healthcare access demo
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +23,537 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /demo/overview:
+    get:
+      operationId: getDemoOverview
+      tags: [demo]
+      summary: Get role-aware overview data
+      parameters:
+        - $ref: "#/components/parameters/Role"
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoOverview"
+  /demo/hospitals:
+    get:
+      operationId: getDemoHospitals
+      tags: [demo]
+      summary: List approved demo hospitals
+      responses:
+        "200":
+          description: Hospitals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Hospital"
+  /demo/doctors:
+    get:
+      operationId: getDemoDoctors
+      tags: [demo]
+      summary: List doctors visible to the selected tenant
+      parameters:
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Doctors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Doctor"
+  /demo/availability:
+    get:
+      operationId: getDemoAvailability
+      tags: [demo]
+      summary: Get generated bookable availability
+      parameters:
+        - name: doctorId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: date
+          in: query
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Availability
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AvailabilitySlot"
+  /demo/appointments:
+    get:
+      operationId: getDemoAppointments
+      tags: [demo]
+      summary: List appointments
+      parameters:
+        - $ref: "#/components/parameters/Role"
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Appointments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Appointment"
+    post:
+      operationId: createDemoAppointment
+      tags: [demo]
+      summary: Create and externally verify an appointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppointmentInput"
+      responses:
+        "201":
+          description: Appointment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingResult"
+  /demo/appointments/{appointmentId}:
+    get:
+      operationId: getDemoAppointment
+      tags: [demo]
+      summary: Get appointment detail and event timeline
+      parameters:
+        - name: appointmentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Appointment detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppointmentDetail"
+  /demo/ai/message:
+    post:
+      operationId: sendDemoAiMessage
+      tags: [demo]
+      summary: Run the structured patient access agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiMessageInput"
+      responses:
+        "200":
+          description: Agent response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiMessageResponse"
+  /demo/questionnaire:
+    get:
+      operationId: getDemoQuestionnaire
+      tags: [demo]
+      summary: Get assigned pre-visit questionnaire
+      responses:
+        "200":
+          description: Questionnaire
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Questionnaire"
+    post:
+      operationId: submitDemoQuestionnaire
+      tags: [demo]
+      summary: Submit structured questionnaire answers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuestionnaireInput"
+      responses:
+        "200":
+          description: Submitted questionnaire
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Questionnaire"
+  /demo/failure-simulation:
+    post:
+      operationId: runFailureSimulation
+      tags: [demo]
+      summary: Run the timeout and reconciliation demo
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FailureSimulationInput"
+      responses:
+        "200":
+          description: Recovery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryResult"
+  /demo/analytics:
+    get:
+      operationId: getDemoAnalytics
+      tags: [demo]
+      summary: Get operational analytics
+      parameters:
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+  /demo/audit:
+    get:
+      operationId: getDemoAudit
+      tags: [demo]
+      summary: Get auditable event trail
+      parameters:
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+  /demo/workflows:
+    get:
+      operationId: getDemoWorkflows
+      tags: [demo]
+      summary: Get workflow execution records
+      parameters:
+        - $ref: "#/components/parameters/HospitalId"
+      responses:
+        "200":
+          description: Workflow executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowExecution"
 components:
+  parameters:
+    Role:
+      name: role
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Role"
+    HospitalId:
+      name: hospitalId
+      in: query
+      required: false
+      schema: { type: string, default: hospital-a }
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+    Role:
+      type: string
+      enum: [PLATFORM_ADMIN, HOSPITAL_ADMIN, DOCTOR, PATIENT]
+    Hospital:
+      type: object
+      required: [id, name, city, status, integrationStatus, doctors, nextAppointment]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        shortName: { type: string }
+        city: { type: string }
+        address: { type: string }
+        status: { type: string }
+        integrationStatus: { type: string }
+        doctors: { type: integer }
+        nextAppointment: { type: string }
+        accent: { type: string }
+    Doctor:
+      type: object
+      required: [id, hospitalId, name, specialty, department, qualifications, languages, status, nextAvailable, avatar]
+      properties:
+        id: { type: string }
+        hospitalId: { type: string }
+        name: { type: string }
+        specialty: { type: string }
+        department: { type: string }
+        qualifications: { type: string }
+        languages:
+          type: array
+          items: { type: string }
+        status: { type: string }
+        nextAvailable: { type: string }
+        avatar: { type: string }
+        experience: { type: integer }
+    AvailabilitySlot:
+      type: object
+      required: [id, doctorId, date, time, duration, type, status]
+      properties:
+        id: { type: string }
+        doctorId: { type: string }
+        date: { type: string }
+        time: { type: string }
+        duration: { type: integer }
+        type: { type: string }
+        status: { type: string }
+    Appointment:
+      type: object
+      required: [id, hospitalId, patientName, doctorName, specialty, date, time, type, status, externalStatus, verificationStatus, synchronizationStatus, correlationId]
+      properties:
+        id: { type: string }
+        hospitalId: { type: string }
+        patientName: { type: string }
+        doctorName: { type: string }
+        specialty: { type: string }
+        date: { type: string }
+        time: { type: string }
+        type: { type: string }
+        status: { type: string }
+        externalStatus: { type: string }
+        verificationStatus: { type: string }
+        synchronizationStatus: { type: string }
+        correlationId: { type: string }
+        externalId: { type: ["string", "null"] }
+        questionnaireStatus: { type: string }
+        createdAt: { type: string }
+    AppointmentInput:
+      type: object
+      required: [hospitalId, doctorId, slotId, patientName, appointmentType]
+      properties:
+        hospitalId: { type: string }
+        doctorId: { type: string }
+        slotId: { type: string }
+        patientName: { type: string }
+        appointmentType: { type: string }
+        simulateTimeout: { type: boolean }
+    BookingResult:
+      type: object
+      required: [appointment, timeline, message]
+      properties:
+        appointment:
+          $ref: "#/components/schemas/Appointment"
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineEvent"
+        message: { type: string }
+    AppointmentDetail:
+      type: object
+      required: [appointment, timeline]
+      properties:
+        appointment:
+          $ref: "#/components/schemas/Appointment"
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineEvent"
+    TimelineEvent:
+      type: object
+      required: [id, label, detail, status, timestamp]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        detail: { type: string }
+        status: { type: string }
+        timestamp: { type: string }
+        operationId: { type: ["string", "null"] }
+    AiMessageInput:
+      type: object
+      required: [message, conversationId]
+      properties:
+        message: { type: string }
+        conversationId: { type: string }
+        hospitalId: { type: string }
+        selectedDoctorId: { type: ["string", "null"] }
+        selectedSlotId: { type: ["string", "null"] }
+    AiMessageResponse:
+      type: object
+      required: [conversationId, reply, intent, stage, messages, suggestedSlots, safetyNote]
+      properties:
+        conversationId: { type: string }
+        reply: { type: string }
+        intent: { type: string }
+        stage: { type: string }
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        suggestedSlots:
+          type: array
+          items:
+            $ref: "#/components/schemas/AvailabilitySlot"
+        safetyNote: { type: string }
+    ChatMessage:
+      type: object
+      required: [id, role, text, timestamp]
+      properties:
+        id: { type: string }
+        role: { type: string }
+        text: { type: string }
+        timestamp: { type: string }
+    Questionnaire:
+      type: object
+      required: [id, title, description, status, questions, submittedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string }
+        submittedAt: { type: ["string", "null"] }
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Question"
+    Question:
+      type: object
+      required: [id, label, type, required, answer]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        type: { type: string }
+        required: { type: boolean }
+        options:
+          type: array
+          items: { type: string }
+        answer: { type: ["string", "null"] }
+    QuestionnaireInput:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: object
+          additionalProperties: { type: string }
+    FailureSimulationInput:
+      type: object
+      properties:
+        hospitalId: { type: string }
+    RecoveryResult:
+      type: object
+      required: [scenario, classification, correlationId, operationId, retryCount, externalStatus, verificationStatus, synchronizationStatus, finalState, timeline]
+      properties:
+        scenario: { type: string }
+        classification: { type: string }
+        correlationId: { type: string }
+        operationId: { type: string }
+        retryCount: { type: integer }
+        externalStatus: { type: string }
+        verificationStatus: { type: string }
+        synchronizationStatus: { type: string }
+        finalState: { type: string }
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineEvent"
+    DemoOverview:
+      type: object
+      required: [role, user, hospital, metrics, appointments, activity]
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        user: { type: string }
+        hospital:
+          $ref: "#/components/schemas/Hospital"
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/Metric"
+        appointments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Appointment"
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/Activity"
+    Metric:
+      type: object
+      required: [label, value, change, tone]
+      properties:
+        label: { type: string }
+        value: { type: string }
+        change: { type: string }
+        tone: { type: string }
+    Activity:
+      type: object
+      required: [id, label, detail, time, tone]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        detail: { type: string }
+        time: { type: string }
+        tone: { type: string }
+    Analytics:
+      type: object
+      required: [bookingSuccess, verificationRate, medianLatency, utilization, weeklyVolume, statusCounts]
+      properties:
+        bookingSuccess: { type: number }
+        verificationRate: { type: number }
+        medianLatency: { type: number }
+        utilization: { type: number }
+        weeklyVolume:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChartPoint"
+        statusCounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChartPoint"
+    ChartPoint:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: number }
+    AuditEvent:
+      type: object
+      required: [id, action, actor, resource, status, timestamp, correlationId]
+      properties:
+        id: { type: string }
+        action: { type: string }
+        actor: { type: string }
+        resource: { type: string }
+        status: { type: string }
+        timestamp: { type: string }
+        correlationId: { type: string }
+    WorkflowExecution:
+      type: object
+      required: [id, name, trigger, status, scheduledFor, completedAt, steps]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        trigger: { type: string }
+        status: { type: string }
+        scheduledFor: { type: string }
+        completedAt: { type: ["string", "null"] }
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+    WorkflowStep:
+      type: object
+      required: [label, status]
+      properties:
+        label: { type: string }
+        status: { type: string }
