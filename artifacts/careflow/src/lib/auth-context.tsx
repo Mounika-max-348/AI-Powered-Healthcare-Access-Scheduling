@@ -14,6 +14,11 @@ type StoredSession = { token: string; actor: Actor };
 
 const STORAGE_KEY = 'careflow.session';
 
+// Mirrors main.tsx: these two calls go straight through the browser fetch
+// (not the generated API client), so they need the same base URL applied
+// by hand when the frontend and API are deployed on different origins.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+
 function readStoredSession(): StoredSession | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -52,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
-    fetch('/api/auth/me', { headers: { authorization: `Bearer ${session.token}` } })
+    fetch(`${API_BASE}/api/auth/me`, { headers: { authorization: `Bearer ${session.token}` } })
       .then((response) => {
         if (cancelled) return;
         if (!response.ok) {
@@ -77,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoggingIn(role);
     setError(null);
     try {
-      const response = await fetch('/api/auth/demo-login', {
+      const response = await fetch(`${API_BASE}/api/auth/demo-login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role }),
