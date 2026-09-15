@@ -97,9 +97,10 @@ function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) 
   const appointmentsQuery = useGetDemoAppointments({ role: role as any, hospitalId: hospital?.id });
   const detailId = selectedAppointmentId || appointmentsQuery.data?.[0]?.id || '';
   const detailQuery = useGetDemoAppointment(detailId, { query: { enabled: Boolean(detailId), queryKey: getGetDemoAppointmentQueryKey(detailId) } });
-  const analyticsQuery = useGetDemoAnalytics({ hospitalId: hospital?.id });
-  const auditQuery = useGetDemoAudit({ hospitalId: hospital?.id });
-  const workflowsQuery = useGetDemoWorkflows({ hospitalId: hospital?.id });
+  const isAdminRole = role === 'HOSPITAL_ADMIN' || role === 'PLATFORM_ADMIN';
+  const analyticsQuery = useGetDemoAnalytics({ hospitalId: hospital?.id }, { query: { enabled: isAdminRole && Boolean(hospital?.id), queryKey: getGetDemoAnalyticsQueryKey({ hospitalId: hospital?.id }) } });
+  const auditQuery = useGetDemoAudit({ hospitalId: hospital?.id }, { query: { enabled: isAdminRole && Boolean(hospital?.id), queryKey: getGetDemoAuditQueryKey({ hospitalId: hospital?.id }) } });
+  const workflowsQuery = useGetDemoWorkflows({ hospitalId: hospital?.id }, { query: { enabled: isAdminRole && Boolean(hospital?.id), queryKey: getGetDemoWorkflowsQueryKey({ hospitalId: hospital?.id }) } });
   const questionnaireQuery = useGetDemoQuestionnaire();
   const healthQuery = useHealthCheck();
   const ai = useSendDemoAiMessage();
