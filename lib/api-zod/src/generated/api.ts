@@ -175,6 +175,16 @@ export const GetDemoAppointmentsResponse = zod.array(GetDemoAppointmentsResponse
 /**
  * @summary Create and externally verify an appointment
  */
+export const createDemoAppointmentHeaderIdempotencyKeyMin = 8;
+export const createDemoAppointmentHeaderIdempotencyKeyMax = 200;
+
+
+
+export const CreateDemoAppointmentHeader = zod.object({
+  "Idempotency-Key": zod.string().min(createDemoAppointmentHeaderIdempotencyKeyMin).max(createDemoAppointmentHeaderIdempotencyKeyMax).optional(),
+  "x-correlation-id": zod.string().optional()
+})
+
 export const CreateDemoAppointmentBody = zod.object({
   "hospitalId": zod.string(),
   "doctorId": zod.string(),
@@ -253,8 +263,53 @@ export const GetDemoAppointmentResponse = zod.object({
 
 
 /**
+ * @summary Reconcile an appointment with an unknown external outcome
+ */
+export const ReconcileDemoAppointmentParams = zod.object({
+  "appointmentId": zod.coerce.string()
+})
+
+export const ReconcileDemoAppointmentHeader = zod.object({
+  "x-correlation-id": zod.string().optional()
+})
+
+export const ReconcileDemoAppointmentResponse = zod.object({
+  "appointment": zod.object({
+  "id": zod.string(),
+  "hospitalId": zod.string(),
+  "patientName": zod.string(),
+  "doctorName": zod.string(),
+  "specialty": zod.string(),
+  "date": zod.string(),
+  "time": zod.string(),
+  "type": zod.string(),
+  "status": zod.string(),
+  "externalStatus": zod.string(),
+  "verificationStatus": zod.string(),
+  "synchronizationStatus": zod.string(),
+  "correlationId": zod.string(),
+  "externalId": zod.string().nullish(),
+  "questionnaireStatus": zod.string().optional(),
+  "createdAt": zod.string().optional()
+}),
+  "timeline": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "detail": zod.string(),
+  "status": zod.string(),
+  "timestamp": zod.string(),
+  "operationId": zod.string().nullish()
+}))
+})
+
+
+/**
  * @summary Run the structured patient access agent
  */
+export const SendDemoAiMessageHeader = zod.object({
+  "x-correlation-id": zod.string().optional()
+})
+
 export const SendDemoAiMessageBody = zod.object({
   "message": zod.string(),
   "conversationId": zod.string(),
@@ -334,6 +389,10 @@ export const SubmitDemoQuestionnaireResponse = zod.object({
 /**
  * @summary Run the timeout and reconciliation demo
  */
+export const RunFailureSimulationHeader = zod.object({
+  "x-correlation-id": zod.string().optional()
+})
+
 export const RunFailureSimulationBody = zod.object({
   "hospitalId": zod.string().optional()
 })

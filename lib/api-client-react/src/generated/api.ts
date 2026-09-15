@@ -729,6 +729,80 @@ export function useGetDemoAppointment<TData = Awaited<ReturnType<typeof getDemoA
 
 
 
+export const getReconcileDemoAppointmentUrl = (appointmentId: string,) => {
+
+
+
+
+  return `/api/demo/appointments/${appointmentId}/reconcile`
+}
+
+/**
+ * @summary Reconcile an appointment with an unknown external outcome
+ */
+export const reconcileDemoAppointment = async (appointmentId: string, options?: Parameters<typeof customFetch>[1]): Promise<AppointmentDetail> => {
+
+  return customFetch<AppointmentDetail>(getReconcileDemoAppointmentUrl(appointmentId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getReconcileDemoAppointmentMutationKey = () => ['reconcileDemoAppointment'] as const;
+
+export const getReconcileDemoAppointmentMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileDemoAppointment>>, TError,ReconcileDemoAppointmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reconcileDemoAppointment>>, TError,ReconcileDemoAppointmentMutationVariables, TContext> => {
+
+const mutationKey = getReconcileDemoAppointmentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reconcileDemoAppointment>>, ReconcileDemoAppointmentMutationVariables> = (props) => {
+          const {appointmentId} = props ?? {};
+
+          return  reconcileDemoAppointment(appointmentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReconcileDemoAppointmentMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileDemoAppointment>>>
+
+    export type ReconcileDemoAppointmentMutationError = ErrorType<unknown>
+    export type ReconcileDemoAppointmentMutationVariables = {appointmentId: string}
+
+    /**
+ * @summary Reconcile an appointment with an unknown external outcome
+ */
+export const useReconcileDemoAppointment = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileDemoAppointment>>, TError,ReconcileDemoAppointmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reconcileDemoAppointment>>,
+        TError,
+        ReconcileDemoAppointmentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReconcileDemoAppointmentMutationOptions(options));
+    }
+
 export const getSendDemoAiMessageUrl = () => {
 
 

@@ -113,6 +113,9 @@ paths:
       operationId: createDemoAppointment
       tags: [demo]
       summary: Create and externally verify an appointment
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CorrelationId"
       requestBody:
         required: true
         content:
@@ -143,11 +146,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AppointmentDetail"
+  /demo/appointments/{appointmentId}/reconcile:
+    post:
+      operationId: reconcileDemoAppointment
+      tags: [demo]
+      summary: Reconcile an appointment with an unknown external outcome
+      parameters:
+        - name: appointmentId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/CorrelationId"
+      responses:
+        "200":
+          description: Reconciled appointment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppointmentDetail"
   /demo/ai/message:
     post:
       operationId: sendDemoAiMessage
       tags: [demo]
       summary: Run the structured patient access agent
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
       requestBody:
         required: true
         content:
@@ -195,6 +218,8 @@ paths:
       operationId: runFailureSimulation
       tags: [demo]
       summary: Run the timeout and reconciliation demo
+      parameters:
+        - $ref: "#/components/parameters/CorrelationId"
       requestBody:
         required: false
         content:
@@ -256,6 +281,16 @@ paths:
                   $ref: "#/components/schemas/WorkflowExecution"
 components:
   parameters:
+    CorrelationId:
+      name: x-correlation-id
+      in: header
+      required: false
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, minLength: 8, maxLength: 200 }
     Role:
       name: role
       in: query

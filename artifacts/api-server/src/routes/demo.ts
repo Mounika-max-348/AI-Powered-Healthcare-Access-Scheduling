@@ -1,14 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import {
   CreateDemoAppointmentBody,
-  GetDemoAvailabilityQueryParams,
   GetDemoAppointmentParams,
   GetDemoAppointmentsQueryParams,
   GetDemoAnalyticsQueryParams,
   GetDemoAuditQueryParams,
+  GetDemoAvailabilityQueryParams,
   GetDemoDoctorsQueryParams,
   GetDemoOverviewQueryParams,
-  GetDemoQuestionnaireResponse,
   GetDemoWorkflowsQueryParams,
   RunFailureSimulationBody,
   SendDemoAiMessageBody,
@@ -24,178 +24,245 @@ import {
   hospitals,
   questionnaire,
   slots,
-  slotsFor,
-  timelineFor,
   workflows,
-  type Appointment,
-  type TimelineEvent,
 } from "../lib/careflow-state";
+import {
+  accessErrorHandler,
+  actorFromRequest,
+  canReadAppointment,
+  canReadHospitalDirectory,
+  requireHospitalAccess,
+  requireRole,
+  type Actor,
+} from "../lib/auth";
+import {
+  careFlowDomain,
+  DomainError,
+  isLiveAvailableSlot,
+  timelineFor,
+} from "../lib/careflow-domain";
+import { executeCapability } from "../lib/capabilities";
 
 const router: IRouter = Router();
 
-const isoNow = () => new Date().toISOString();
-const id = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+const correlationId = (request: { header(name: string): string | undefined }) =>
+  request.header("x-correlation-id") ?? `corr-${randomUUID()}`;
 
-const activity = (hospitalId: string) =>
-  auditEvents
+const audit = (
+  action: string,
+  actor: Actor,
+  resource: string,
+  status: string,
+  hospitalId: string,
+  correlation: string,
+) => {
+  auditEvents.unshift({
+    id: `audit-${randomUUID()}`,
+    action,
+    actor: actor.id,
+    resource,
+    status,
+    timestamp: new Date().toISOString(),
+    correlationId: correlation,
+    hospitalId,
+  });
+};
+
+function targetHospital(actor: Actor, requested?: string) {
+  const target = requested ?? actor.hospitalId ?? "hospital-a";
+  if (actor.role !== "PATIENT" && actor.role !== "PLATFORM_ADMIN") {
+    requireHospitalAccess(actor, target);
+  }
+  if (!hospitals.some((hospital) => hospital.id === target)) {
+    throw new DomainError("Hospital not found.", 404);
+  }
+  return target;
+}
+
+function visibleAppointments(actor: Actor, hospitalId?: string) {
+  if (actor.role === "PLATFORM_ADMIN") {
+    return hospitalId && hospitalId !== "all"
+      ? appointments.filter((appointment) => appointment.hospitalId === hospitalId)
+      : appointments;
+  }
+  if (actor.role === "PATIENT") {
+    return appointments.filter((appointment) => appointment.patientName === actor.displayName);
+  }
+  const target = targetHospital(actor, hospitalId);
+  return appointments.filter((appointment) => appointment.hospitalId === target);
+}
+
+router.get("/demo/overview", (req, res) => {
+  const actor = actorFromRequest(req);
+  const parsed = GetDemoOverviewQueryParams.parse(req.query);
+  const hospitalId = targetHospital(actor, parsed.hospitalId);
+  const selectedHospital = hospitalFor(hospitalId);
+  const actorAppointments = visibleAppointments(actor, actor.role === "PATIENT" ? undefined : hospitalId);
+  const activity = auditEvents
     .filter((event) => event.hospitalId === hospitalId)
     .slice(0, 5)
     .map((event) => ({
       id: event.id,
       label: event.action.replaceAll("_", " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase()),
       detail: `${event.actor} · ${event.resource}`,
-      time: new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.max(1, Math.round((Date.now() - new Date(event.timestamp).getTime()) / 60000)), "minute"),
+      time: "recently",
       tone: event.status === "SUCCESS" ? "success" : "warning",
     }));
-
-const metricsFor = (role: string, hospitalId: string) => {
-  if (role === "PATIENT") {
-    return [
-      { label: "Upcoming visits", value: String(appointments.filter((appointment) => appointment.patientName === "Maya Nair" && appointment.status === "CONFIRMED").length), change: "Next visit this week", tone: "teal" },
-      { label: "Questionnaire", value: questionnaire.status === "SUBMITTED" ? "Complete" : "Due", change: "Orthopedic intake", tone: "amber" },
-      { label: "Care network", value: "2 hospitals", change: "Verified availability", tone: "indigo" },
-    ];
-  }
-  const hospitalAppointments = appointments.filter((appointment) => appointment.hospitalId === hospitalId);
-  return [
-    { label: "Appointments this week", value: String(hospitalAppointments.length + 21), change: "+12.4% vs last week", tone: "teal" },
-    { label: "Verification rate", value: "98.6%", change: "+2.1% vs last week", tone: "green" },
-    { label: "Average booking latency", value: "1.8s", change: "-0.4s vs last week", tone: "indigo" },
-    { label: "Open workflows", value: "04", change: "1 needs attention", tone: "amber" },
-  ];
-};
-
-router.get("/demo/overview", (req, res) => {
-  const parsed = GetDemoOverviewQueryParams.parse(req.query);
-  const selectedHospital = hospitalFor(parsed.hospitalId);
-  const role = parsed.role ?? "PATIENT";
-  const visibleAppointments = role === "PLATFORM_ADMIN" ? appointments : appointments.filter((appointment) => appointment.hospitalId === selectedHospital.id);
   res.json({
-    role,
-    user: role === "PATIENT" ? "Maya Nair" : role === "DOCTOR" ? "Dr. Anika Rao" : role === "PLATFORM_ADMIN" ? "Aarav Shah" : "Nisha Kulkarni",
+    role: actor.role,
+    user: actor.displayName,
     hospital: selectedHospital,
-    metrics: metricsFor(role, selectedHospital.id),
-    appointments: visibleAppointments.slice(0, 6),
-    activity: activity(selectedHospital.id),
+    metrics: actor.role === "PATIENT"
+      ? [
+          { label: "Upcoming visits", value: String(actorAppointments.filter((appointment) => appointment.status === "CONFIRMED").length), change: "Next visit this week", tone: "teal" },
+          { label: "Questionnaire", value: questionnaire.status === "SUBMITTED" ? "Complete" : "Due", change: "Orthopedic intake", tone: "amber" },
+          { label: "Care network", value: "2 hospitals", change: "Verified availability", tone: "indigo" },
+        ]
+      : [
+          { label: "Appointments this week", value: String(actorAppointments.length), change: "Tenant-scoped", tone: "teal" },
+          { label: "Verification rate", value: "100%", change: "Connector verified", tone: "green" },
+          { label: "Average booking latency", value: "Measured", change: "From operation audit", tone: "indigo" },
+          { label: "Open workflows", value: String(workflows.filter((workflow) => workflow.hospitalId === hospitalId && workflow.status !== "COMPLETED").length), change: "Tenant-scoped", tone: "amber" },
+        ],
+    appointments: actorAppointments.slice(0, 6),
+    activity,
   });
 });
 
-router.get("/demo/hospitals", (_req, res) => res.json(hospitals));
+router.get("/demo/hospitals", (req, res) => {
+  const actor = actorFromRequest(req);
+  if (canReadHospitalDirectory(actor)) return res.json(hospitals);
+  return res.json(hospitals.filter((hospital) => hospital.id === actor.hospitalId));
+});
 
 router.get("/demo/doctors", (req, res) => {
+  const actor = actorFromRequest(req);
   const parsed = GetDemoDoctorsQueryParams.parse(req.query);
-  res.json(doctors.filter((doctor) => doctor.hospitalId === parsed.hospitalId));
+  const hospitalId = targetHospital(actor, parsed.hospitalId);
+  return res.json(doctors.filter((doctor) => doctor.hospitalId === hospitalId && doctor.status === "ACTIVE"));
 });
 
 router.get("/demo/availability", (req, res) => {
+  const actor = actorFromRequest(req);
   const parsed = GetDemoAvailabilityQueryParams.parse(req.query);
   const doctor = doctorFor(parsed.doctorId);
-  if (!doctor || doctor.hospitalId !== parsed.hospitalId) return res.status(404).json({ error: "Doctor is not available in this hospital." });
-  return res.json(slotsFor(parsed.doctorId, parsed.date));
+  if (!doctor || doctor.hospitalId !== parsed.hospitalId) {
+    return res.status(404).json({ error: "Doctor is not available in this hospital." });
+  }
+  targetHospital(actor, parsed.hospitalId);
+  return res.json(
+    slots.filter((slot) => slot.date === parsed.date && isLiveAvailableSlot(slot, doctor.id, parsed.hospitalId)),
+  );
 });
 
 router.get("/demo/appointments", (req, res) => {
+  const actor = actorFromRequest(req);
   const parsed = GetDemoAppointmentsQueryParams.parse(req.query);
-  if (parsed.role === "PLATFORM_ADMIN") return res.json(appointments);
-  return res.json(appointments.filter((appointment) => appointment.hospitalId === parsed.hospitalId));
+  return res.json(visibleAppointments(actor, parsed.hospitalId));
 });
 
-router.post("/demo/appointments", (req, res) => {
+router.post("/demo/appointments", async (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = CreateDemoAppointmentBody.parse(req.body);
-  const slot = slots.find((candidate) => candidate.id === parsed.slotId);
-  const doctor = doctorFor(parsed.doctorId);
-  if (!slot || slot.status !== "AVAILABLE" || !doctor || doctor.hospitalId !== parsed.hospitalId) {
-    return res.status(409).json({ error: "That slot is no longer available. Please select another verified slot." });
+  if (actor.role === "PATIENT" && parsed.patientName !== actor.displayName) {
+    return res.status(403).json({ error: "Patients can only book for their own patient identity." });
   }
-  slot.status = "BOOKED";
-  const correlationId = id("corr");
-  const appointment: Appointment = {
-    id: id("apt"),
-    hospitalId: parsed.hospitalId,
-    patientName: parsed.patientName,
-    doctorName: doctor.name,
-    specialty: doctor.specialty,
-    date: slot.date,
-    time: slot.time,
-    type: parsed.appointmentType,
-    status: "CONFIRMED",
-    externalStatus: "VERIFIED",
-    verificationStatus: "VERIFIED",
-    synchronizationStatus: "SYNCHRONIZED",
-    correlationId,
-    externalId: `NSMC-EXT-${Math.floor(10000 + Math.random() * 89999)}`,
-    questionnaireStatus: "ASSIGNED",
-    createdAt: isoNow(),
-    doctorId: doctor.id,
-  };
-  appointments.unshift(appointment);
-  auditEvents.unshift(
-    { id: id("audit"), action: "APPOINTMENT_CONFIRMED", actor: "patient-access-agent", resource: `Appointment ${appointment.id}`, status: "SUCCESS", timestamp: isoNow(), correlationId, hospitalId: parsed.hospitalId },
-    { id: id("audit"), action: "QUESTIONNAIRE_ASSIGNED", actor: "workflow / pre-visit", resource: `Appointment ${appointment.id}`, status: "SUCCESS", timestamp: isoNow(), correlationId, hospitalId: parsed.hospitalId },
+  if (actor.role !== "PATIENT") requireHospitalAccess(actor, parsed.hospitalId);
+  const idempotencyKey = req.header("idempotency-key") ?? `careflow:${actor.id}:${parsed.slotId}`;
+  const correlation = correlationId(req);
+  const { result, statusCode } = await careFlowDomain.book(
+    {
+      ...parsed,
+      idempotencyKey,
+    },
+    { actorId: actor.id, correlationId: correlation },
   );
-  workflows.unshift({
-    id: id("workflow"),
-    name: "Appointment confirmed",
-    trigger: "appointment.confirmed",
-    status: "COMPLETED",
-    scheduledFor: isoNow(),
-    completedAt: isoNow(),
-    hospitalId: parsed.hospitalId,
-    steps: [
-      { label: "Questionnaire assigned", status: "COMPLETED" },
-      { label: "Reminder scheduled", status: "COMPLETED" },
-      { label: "Patient notification", status: "COMPLETED" },
-      { label: "Doctor inbox updated", status: "COMPLETED" },
-    ],
-  });
-  const timeline = timelineFor(appointment);
-  return res.status(201).json({
-    appointment,
-    timeline,
-    message: "Your appointment is confirmed. The external record was verified and synchronized.",
-  });
+  res.setHeader("x-correlation-id", correlation);
+  res.status(statusCode).json(result);
+  return undefined;
 });
 
 router.get("/demo/appointments/:appointmentId", (req, res) => {
+  const actor = actorFromRequest(req);
   const parsed = GetDemoAppointmentParams.parse(req.params);
   const appointment = appointments.find((candidate) => candidate.id === parsed.appointmentId);
   if (!appointment) return res.status(404).json({ error: "Appointment not found." });
+  if (!canReadAppointment(actor, appointment.hospitalId, appointment.patientName)) {
+    return res.status(403).json({ error: "You are not authorized to access this appointment." });
+  }
   return res.json({ appointment, timeline: timelineFor(appointment) });
 });
 
+router.post("/demo/appointments/:appointmentId/reconcile", async (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
+  const parsed = GetDemoAppointmentParams.parse(req.params);
+  const appointment = appointments.find((candidate) => candidate.id === parsed.appointmentId);
+  if (!appointment) return res.status(404).json({ error: "Appointment not found." });
+  requireHospitalAccess(actor, appointment.hospitalId);
+  const correlation = correlationId(req);
+  const result = await careFlowDomain.reconcile(parsed.appointmentId, {
+    actorId: actor.id,
+    correlationId: correlation,
+  });
+  res.setHeader("x-correlation-id", correlation);
+  return res.json(result);
+});
+
 router.post("/demo/ai/message", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = SendDemoAiMessageBody.parse(req.body);
   const current = conversationMessages.get(parsed.conversationId) ?? [];
-  current.push({ role: "user", text: parsed.message, timestamp: isoNow() });
+  const correlation = correlationId(req);
+  current.push({ role: "user", text: parsed.message, timestamp: new Date().toISOString() });
   const lower = parsed.message.toLowerCase();
   let reply = "I can help with administrative care access, but I cannot diagnose conditions or recommend treatment.";
   let intent = "SAFETY_REDIRECT";
   let stage = "SAFE_REDIRECT";
-  let suggestedSlots: typeof slots = [];
+  let suggestedSlots = slots.filter(() => false);
 
   if (/(diagnos|disease|what do i have|medication|prescri)/.test(lower)) {
-    reply = "I can’t diagnose or advise on medication changes. I can help you find an appropriate appointment, or connect you with a care coordinator.";
-  } else if (!parsed.selectedDoctorId && !parsed.selectedSlotId && /(shoulder|knee|back|doctor|appointment|see)/.test(lower)) {
-    intent = "FIND_APPOINTMENT";
-    stage = "CLARIFICATION";
-    reply = "I can help you find an appointment. What day works best, and would you prefer an in-person consultation? I’ll only show slots that are actually bookable.";
-  } else if (!parsed.selectedDoctorId && /(friday|monday|tuesday|wednesday|thursday|weekend|tomorrow|today)/.test(lower)) {
-    intent = "FIND_APPOINTMENT";
-    stage = "DISCOVERY";
-    const doctor = doctors.find((candidate) => candidate.hospitalId === (parsed.hospitalId ?? "hospital-a") && candidate.specialty === "Orthopedics") ?? doctors[0];
-    suggestedSlots = slots.filter((slot) => slot.doctorId === doctor.id && slot.status === "AVAILABLE").slice(0, 4);
-    reply = `${doctor.name} has verified availability at ${suggestedSlots.map((slot) => `${slot.time} on ${new Intl.DateTimeFormat("en-IN", { weekday: "long", month: "short", day: "numeric" }).format(new Date(`${slot.date}T12:00:00`))}`).join(", ")}. Which slot would you like?`;
-  } else if (parsed.selectedDoctorId || parsed.selectedSlotId || /(slot|book|in-person)/.test(lower)) {
-    intent = "BOOK_APPOINTMENT";
-    stage = "READY_TO_BOOK";
-    const doctor = doctorFor(parsed.selectedDoctorId ?? "dr-rao") ?? doctors[0];
-    suggestedSlots = slots.filter((slot) => slot.doctorId === doctor.id && slot.status === "AVAILABLE").slice(0, 4);
-    reply = "I found the live schedule. Select one of these verified slots and I’ll create the appointment, then verify it with the connected healthcare system before confirming.";
+    audit("AI_SAFETY_REDIRECT", actor, `Conversation ${parsed.conversationId}`, "SUCCESS", parsed.hospitalId ?? actor.hospitalId ?? "hospital-a", correlation);
+  } else {
+    const hospitalId = targetHospital(actor, parsed.hospitalId);
+    const doctor = parsed.selectedDoctorId ? doctorFor(parsed.selectedDoctorId) : undefined;
+    if (doctor && doctor.hospitalId !== hospitalId) {
+      return res.status(403).json({ error: "The selected doctor is outside the authorized hospital scope." });
+    }
+    if (parsed.selectedSlotId) {
+      const selectedSlot = slots.find((slot) => slot.id === parsed.selectedSlotId);
+      if (!selectedSlot || !doctor || selectedSlot.doctorId !== doctor.id || !isLiveAvailableSlot(selectedSlot, doctor.id, hospitalId)) {
+        return res.status(409).json({ error: "The selected slot is not a currently bookable capability result." });
+      }
+    }
+    if (!parsed.selectedDoctorId && !parsed.selectedSlotId && /(shoulder|knee|back|doctor|appointment|see)/.test(lower)) {
+      intent = "FIND_APPOINTMENT";
+      stage = "CLARIFICATION";
+      reply = "I can help you find an appointment. What day works best, and would you prefer an in-person consultation? I’ll only show slots that are actually bookable.";
+      audit("CAPABILITY_EXECUTED", actor, "capability:ask_clarifying_question", "SUCCESS", hospitalId, correlation);
+    } else {
+      intent = parsed.selectedDoctorId || parsed.selectedSlotId || /(slot|book|in-person|friday|monday|tuesday|wednesday|thursday|weekend|tomorrow|today)/.test(lower)
+        ? "BOOK_APPOINTMENT"
+        : "FIND_APPOINTMENT";
+      stage = intent === "BOOK_APPOINTMENT" ? "READY_TO_BOOK" : "DISCOVERY";
+      const selectedDoctor = doctor ?? doctors.find((candidate) => candidate.hospitalId === hospitalId && candidate.specialty === "Orthopedics");
+      suggestedSlots = selectedDoctor
+        ? slots.filter((slot) => slot.doctorId === selectedDoctor.id && isLiveAvailableSlot(slot, selectedDoctor.id, hospitalId)).slice(0, 4)
+        : [];
+      reply = intent === "BOOK_APPOINTMENT"
+        ? "I found the live schedule. Select one of these verified slots and I’ll create the appointment through the booking capability, then verify it with the connected healthcare system."
+        : `${selectedDoctor?.name ?? "The care team"} has verified availability. Which slot would you like?`;
+      const capability = intent === "BOOK_APPOINTMENT" ? "prepare_booking" : "find_available_slots";
+      executeCapability(capability, actor, hospitalId, correlation);
+      audit("CAPABILITY_EXECUTED", actor, `capability:${capability}`, "SUCCESS", hospitalId, correlation);
+    }
   }
 
-  current.push({ role: "assistant", text: reply, timestamp: isoNow() });
+  current.push({ role: "assistant", text: reply, timestamp: new Date().toISOString() });
   conversationMessages.set(parsed.conversationId, current);
-  res.json({
+  return res.json({
     conversationId: parsed.conversationId,
     reply,
     intent,
@@ -206,103 +273,114 @@ router.post("/demo/ai/message", (req, res) => {
   });
 });
 
-router.get("/demo/questionnaire", (_req, res) => res.json(questionnaire));
+router.get("/demo/questionnaire", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
+  return res.json(questionnaire);
+});
 
 router.post("/demo/questionnaire", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = SubmitDemoQuestionnaireBody.parse(req.body);
+  const required = questionnaire.questions.filter((question) => question.required);
+  if (required.some((question) => !parsed.answers[question.id]?.trim())) {
+    return res.status(400).json({ error: "All required questionnaire questions must be answered." });
+  }
   for (const question of questionnaire.questions) {
     question.answer = parsed.answers[question.id] ?? question.answer;
   }
   questionnaire.status = "SUBMITTED";
-  questionnaire.submittedAt = isoNow();
+  questionnaire.submittedAt = new Date().toISOString();
+  const hospitalId = actor.hospitalId ?? "hospital-a";
   workflows.unshift({
-    id: id("workflow"),
+    id: `workflow-${randomUUID()}`,
     name: "Questionnaire review",
     trigger: "questionnaire.completed",
     status: "COMPLETED",
-    scheduledFor: isoNow(),
-    completedAt: isoNow(),
-    hospitalId: "hospital-a",
+    scheduledFor: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    hospitalId,
     steps: [
       { label: "Validate structured answers", status: "COMPLETED" },
       { label: "Notify doctor", status: "COMPLETED" },
     ],
   });
-  auditEvents.unshift({ id: id("audit"), action: "QUESTIONNAIRE_COMPLETED", actor: "Maya Nair", resource: questionnaire.title, status: "SUCCESS", timestamp: isoNow(), correlationId: "corr-8f31b2", hospitalId: "hospital-a" });
-  res.json(questionnaire);
+  audit("QUESTIONNAIRE_COMPLETED", actor, questionnaire.title, "SUCCESS", hospitalId, correlationId(req));
+  return res.json(questionnaire);
 });
 
-router.post("/demo/failure-simulation", (req, res) => {
+router.post("/demo/failure-simulation", async (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = RunFailureSimulationBody.parse(req.body ?? {});
-  const hospitalId = parsed.hospitalId ?? "hospital-a";
-  const correlationId = id("corr-timeout");
-  const operationId = id("op-ehr");
-  const base = Date.now();
-  const event = (label: string, detail: string, status: string, offset: number): TimelineEvent => ({
-    id: id("recovery"),
-    label,
-    detail,
-    status,
-    timestamp: new Date(base + offset).toISOString(),
-    operationId,
+  const hospitalId = targetHospital(actor, parsed.hospitalId);
+  const doctor = doctors.find((candidate) => candidate.hospitalId === hospitalId && candidate.specialty === "Orthopedics")!;
+  const slot = slots.find((candidate) => candidate.doctorId === doctor.id && isLiveAvailableSlot(candidate, doctor.id, hospitalId));
+  if (!slot) return res.status(409).json({ error: "No simulation slot is available." });
+  const correlation = correlationId(req);
+  const booking = await careFlowDomain.book(
+    {
+      hospitalId,
+      doctorId: doctor.id,
+      slotId: slot.id,
+      patientName: "Maya Nair",
+      appointmentType: "In-person consultation",
+      idempotencyKey: `failure-simulation:${hospitalId}:${slot.id}`,
+      simulateTimeout: true,
+    },
+    { actorId: actor.id, correlationId: correlation },
+  );
+  const recovery = await careFlowDomain.reconcile(booking.result.appointment.id, {
+    actorId: "reconciliation-worker",
+    correlationId: correlation,
   });
-  const recoveryTimeline = [
-    event("Booking request accepted", "Idempotency key created: hospital-a / maya-nair / demo-timeout", "COMPLETED", 0),
-    event("Mock EHR request timed out", "No response received within 2,000 ms. The outcome is UNKNOWN, not FAILED.", "FAILED", 420),
-    event("External state queried", "Read-before-retry found an existing record with the same idempotency key.", "COMPLETED", 880),
-    event("Duplicate creation prevented", "The connector did not issue a second create request.", "COMPLETED", 1240),
-    event("Appointment synchronized", "External NSMC-EXT-98431 mapped to internal appointment apt-2048.", "COMPLETED", 1650),
-    event("Recovery verified", "Final state is CONFIRMED after external verification.", "COMPLETED", 1990),
-  ];
-  auditEvents.unshift({ id: id("audit"), action: "RECONCILIATION_RECOVERED", actor: "reconciliation-worker", resource: "Appointment apt-2048", status: "SUCCESS", timestamp: isoNow(), correlationId, hospitalId });
-  res.json({
+  return res.json({
     scenario: "Mock EHR timeout → unknown outcome → read-before-retry reconciliation",
     classification: "UNKNOWN_OUTCOME",
-    correlationId,
-    operationId,
+    correlationId: correlation,
+    operationId: `${recovery.appointment.id}:reconcile`,
     retryCount: 0,
-    externalStatus: "FOUND_EXISTING_RECORD",
-    verificationStatus: "VERIFIED",
-    synchronizationStatus: "SYNCHRONIZED",
-    finalState: "CONFIRMED",
-    timeline: recoveryTimeline,
+    externalStatus: recovery.appointment.externalStatus,
+    verificationStatus: recovery.appointment.verificationStatus,
+    synchronizationStatus: recovery.appointment.synchronizationStatus,
+    finalState: recovery.appointment.status,
+    timeline: recovery.timeline,
   });
 });
 
 router.get("/demo/analytics", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = GetDemoAnalyticsQueryParams.parse(req.query);
-  const hospitalAppointments = appointments.filter((appointment) => appointment.hospitalId === parsed.hospitalId);
-  res.json({
-    bookingSuccess: 96.8,
-    verificationRate: 98.6,
+  const hospitalId = targetHospital(actor, parsed.hospitalId);
+  const hospitalAppointments = appointments.filter((appointment) => appointment.hospitalId === hospitalId);
+  return res.json({
+    bookingSuccess: hospitalAppointments.length ? 100 : 0,
+    verificationRate: hospitalAppointments.filter((appointment) => appointment.verificationStatus === "VERIFIED").length / Math.max(1, hospitalAppointments.length) * 100,
     medianLatency: 1.8,
     utilization: 76,
-    weeklyVolume: [
-      { label: "Mon", value: 28 },
-      { label: "Tue", value: 34 },
-      { label: "Wed", value: 31 },
-      { label: "Thu", value: 42 },
-      { label: "Fri", value: 38 },
-      { label: "Sat", value: 26 },
-      { label: "Sun", value: hospitalAppointments.length + 12 },
-    ],
-    statusCounts: [
-      { label: "Confirmed", value: 42 },
-      { label: "Completed", value: 28 },
-      { label: "Pending", value: 4 },
-      { label: "Cancelled", value: 3 },
-    ],
+    weeklyVolume: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, index) => ({ label, value: hospitalAppointments.length + index })),
+    statusCounts: ["CONFIRMED", "COMPLETED", "PENDING", "CANCELLED"].map((status) => ({ label: status[0] + status.slice(1).toLowerCase(), value: hospitalAppointments.filter((appointment) => appointment.status === status).length })),
   });
 });
 
 router.get("/demo/audit", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = GetDemoAuditQueryParams.parse(req.query);
-  res.json(auditEvents.filter((event) => event.hospitalId === parsed.hospitalId || parsed.hospitalId === "all").slice(0, 24));
+  const hospitalId = targetHospital(actor, parsed.hospitalId === "all" ? actor.hospitalId ?? "hospital-a" : parsed.hospitalId);
+  return res.json(auditEvents.filter((event) => actor.role === "PLATFORM_ADMIN" && parsed.hospitalId === "all" ? true : event.hospitalId === hospitalId).slice(0, 50));
 });
 
 router.get("/demo/workflows", (req, res) => {
+  const actor = actorFromRequest(req);
+  requireRole(actor, "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = GetDemoWorkflowsQueryParams.parse(req.query);
-  res.json(workflows.filter((workflow) => workflow.hospitalId === parsed.hospitalId || parsed.hospitalId === "all"));
+  const hospitalId = targetHospital(actor, parsed.hospitalId === "all" ? actor.hospitalId ?? "hospital-a" : parsed.hospitalId);
+  return res.json(workflows.filter((workflow) => actor.role === "PLATFORM_ADMIN" && parsed.hospitalId === "all" ? true : workflow.hospitalId === hospitalId));
 });
+
+router.use(accessErrorHandler);
 
 export default router;

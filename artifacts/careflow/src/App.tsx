@@ -15,6 +15,7 @@ import {
   useGetDemoAvailability, useGetDemoDoctors, useGetDemoHospitals, useGetDemoOverview,
   useGetDemoQuestionnaire, useGetDemoWorkflows, useHealthCheck, useRunFailureSimulation,
   useSendDemoAiMessage, useSubmitDemoQuestionnaire,
+  setDefaultRequestHeaders,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -84,6 +85,14 @@ function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) 
     if (!hospitalId && hospitals[0]?.id) setHospitalId(hospitals[0].id);
   }, [hospitalId, hospitals]);
   const hospital = hospitals.find((item) => item.id === hospitalId) ?? hospitals[0];
+  useEffect(() => {
+    setDefaultRequestHeaders({
+      'x-careflow-role': role,
+      'x-careflow-hospital-id': hospital?.id ?? hospitalId ?? 'hospital-a',
+      'x-careflow-user-id': role === 'PATIENT' ? 'patient-maya' : role === 'DOCTOR' ? 'doctor-rao' : role === 'HOSPITAL_ADMIN' ? 'admin-northstar' : 'platform-aarav',
+      'x-careflow-user-name': role === 'PATIENT' ? 'Maya Nair' : role === 'DOCTOR' ? 'Dr. Anika Rao' : role === 'HOSPITAL_ADMIN' ? 'Nisha Kulkarni' : 'Aarav Shah',
+    });
+  }, [hospital?.id, hospitalId, role]);
   const overviewQuery = useGetDemoOverview({ role: role as any, hospitalId: hospital?.id });
   const doctorsQuery = useGetDemoDoctors({ hospitalId: hospital?.id });
   const doctors = doctorsQuery.data ?? [];

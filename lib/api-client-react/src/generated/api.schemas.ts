@@ -240,6 +240,10 @@ export interface WorkflowExecution {
   steps: WorkflowStep[];
 }
 
+export type CorrelationIdParameter = string;
+
+export type IdempotencyKeyParameter = string;
+
 export type RoleParameter = Role;
 
 export type HospitalIdParameter = string;
