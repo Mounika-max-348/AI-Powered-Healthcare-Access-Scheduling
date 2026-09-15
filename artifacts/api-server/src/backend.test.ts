@@ -138,6 +138,32 @@ describe("CareFlow backend controls", () => {
       assert.equal(forged.status, 401);
     });
 
+    it("issues a working session token for each demo persona and rejects unknown roles", async () => {
+      for (const role of ["PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN"]) {
+        const login = await fetch(`${baseUrl}/api/auth/demo-login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ role }),
+        });
+        assert.equal(login.status, 200);
+        const body = await login.json() as { token: string; actor: { role: string } };
+        assert.equal(body.actor.role, role);
+        const me = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { authorization: `Bearer ${body.token}` },
+        });
+        assert.equal(me.status, 200);
+        const meBody = await me.json() as { actor: { role: string } };
+        assert.equal(meBody.actor.role, role);
+      }
+
+      const invalid = await fetch(`${baseUrl}/api/auth/demo-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "SUPERUSER" }),
+      });
+      assert.equal(invalid.status, 400);
+    });
+
     it("rejects cross-tenant audit access and ignores query-string role escalation", async () => {
       const response = await fetch(`${baseUrl}/api/demo/audit?hospitalId=hospital-b&role=PLATFORM_ADMIN`, {
         headers: headers("HOSPITAL_ADMIN", "hospital-a"),

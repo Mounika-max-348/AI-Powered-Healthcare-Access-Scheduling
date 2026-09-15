@@ -68,6 +68,36 @@ function header(request: Request, name: string) {
   return value?.trim() || undefined;
 }
 
+const demoDefaults: Record<Role, { id: string; displayName: string; email: string }> = {
+  PATIENT: { id: "patient-maya", displayName: "Maya Nair", email: "patient@careflow.demo" },
+  DOCTOR: { id: "doctor-rao", displayName: "Dr. Anika Rao", email: "doctor@careflow.demo" },
+  HOSPITAL_ADMIN: { id: "admin-northstar", displayName: "Nisha Kulkarni", email: "hospitaladmin@careflow.demo" },
+  PLATFORM_ADMIN: { id: "platform-aarav", displayName: "Aarav Shah", email: "platformadmin@careflow.demo" },
+};
+
+export function isKnownRole(value: string): value is Role {
+  return roles.has(value as Role);
+}
+
+/**
+ * Builds the fixed demo persona for a role. Used both by the header-based
+ * dev fallback below and by the /api/auth/demo-login capability, so both
+ * paths always agree on who "Dr. Anika Rao" (etc.) is.
+ */
+export function demoActorForRole(role: Role): Actor {
+  const fallback = demoDefaults[role];
+  return {
+    id: fallback.id,
+    role,
+    hospitalId: role === "PLATFORM_ADMIN" ? null : "hospital-a",
+    displayName: fallback.displayName,
+  };
+}
+
+export function demoEmailForRole(role: Role): string {
+  return demoDefaults[role].email;
+}
+
 export function actorFromRequest(request: Request): Actor {
   const bearer = header(request, "authorization")?.replace(/^Bearer\s+/i, "");
   const signedActor = bearer ? actorFromSignedToken(bearer) : null;
@@ -90,13 +120,7 @@ export function actorFromRequest(request: Request): Actor {
     throw new AccessError("The requested hospital is not available.", 403);
   }
 
-  const defaults: Record<Role, { id: string; displayName: string }> = {
-    PATIENT: { id: "patient-maya", displayName: "Maya Nair" },
-    DOCTOR: { id: "doctor-rao", displayName: "Dr. Anika Rao" },
-    HOSPITAL_ADMIN: { id: "admin-northstar", displayName: "Nisha Kulkarni" },
-    PLATFORM_ADMIN: { id: "platform-aarav", displayName: "Aarav Shah" },
-  };
-  const fallback = defaults[role];
+  const fallback = demoDefaults[role];
   return {
     id: header(request, "x-careflow-user-id") ?? fallback.id,
     role,

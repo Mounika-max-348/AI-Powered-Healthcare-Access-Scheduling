@@ -3,8 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
 import {
   Activity, AlertTriangle, ArrowRight, BadgeCheck, BarChart3, Bell, Bot, Building2,
-  CalendarDays, Check, ChevronDown, ClipboardCheck, Clock3, Cloud, Database, FileCheck2,
-  HeartPulse, History, Home, Layers3, ListChecks, LockKeyhole, Menu, MessageSquare,
+  CalendarDays, Check, ClipboardCheck, Clock3, Cloud, Database, FileCheck2,
+  HeartPulse, History, Home, Layers3, ListChecks, LockKeyhole, LogOut, Menu, MessageSquare,
   Network, RefreshCcw, Search, Send, ShieldCheck, Stethoscope, UserRound, UsersRound,
   X, Zap,
 } from 'lucide-react';
@@ -15,12 +15,13 @@ import {
   useGetDemoAvailability, useGetDemoDoctors, useGetDemoHospitals, useGetDemoOverview,
   useGetDemoQuestionnaire, useGetDemoWorkflows, useHealthCheck, useRunFailureSimulation,
   useSendDemoAiMessage, useSubmitDemoQuestionnaire,
-  setDefaultRequestHeaders,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import Hero from '@/pages/hero';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -76,7 +77,8 @@ function Logo() {
 }
 
 function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) {
-  const [role, setRole] = useState<(typeof roles)[number]['value']>('PATIENT');
+  const { actor, logout } = useAuth();
+  const role = (actor?.role ?? 'PATIENT') as (typeof roles)[number]['value'];
   const [hospitalId, setHospitalId] = useState('');
   const [selectedAppointmentId, setSelectedAppointmentId] = useState('');
   const hospitalsQuery = useGetDemoHospitals();
@@ -85,14 +87,6 @@ function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) 
     if (!hospitalId && hospitals[0]?.id) setHospitalId(hospitals[0].id);
   }, [hospitalId, hospitals]);
   const hospital = hospitals.find((item) => item.id === hospitalId) ?? hospitals[0];
-  useEffect(() => {
-    setDefaultRequestHeaders({
-      'x-careflow-role': role,
-      'x-careflow-hospital-id': hospital?.id ?? hospitalId ?? 'hospital-a',
-      'x-careflow-user-id': role === 'PATIENT' ? 'patient-maya' : role === 'DOCTOR' ? 'doctor-rao' : role === 'HOSPITAL_ADMIN' ? 'admin-northstar' : 'platform-aarav',
-      'x-careflow-user-name': role === 'PATIENT' ? 'Maya Nair' : role === 'DOCTOR' ? 'Dr. Anika Rao' : role === 'HOSPITAL_ADMIN' ? 'Nisha Kulkarni' : 'Aarav Shah',
-    });
-  }, [hospital?.id, hospitalId, role]);
   const overviewQuery = useGetDemoOverview({ role: role as any, hospitalId: hospital?.id });
   const doctorsQuery = useGetDemoDoctors({ hospitalId: hospital?.id });
   const doctors = doctorsQuery.data ?? [];
@@ -114,7 +108,8 @@ function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) 
   const failure = useRunFailureSimulation();
 
   return children({
-    role, setRole, hospitalId: hospital?.id ?? hospitalId, setHospitalId, hospital, hospitals,
+    role, displayName: actor?.displayName ?? 'Guest', logout,
+    hospitalId: hospital?.id ?? hospitalId, setHospitalId, hospital, hospitals,
     overview: overviewQuery.data, doctors, availability: availabilityQuery.data ?? [],
     appointments: appointmentsQuery.data ?? [], selectedAppointmentId, setSelectedAppointmentId,
     appointmentDetail: detailQuery.data, analytics: analyticsQuery.data, audit: auditQuery.data ?? [],
@@ -133,7 +128,7 @@ function AppData({ children }: { children: (data: AppDataValue) => ReactNode }) 
 }
 
 type AppDataValue = {
-  role: (typeof roles)[number]['value']; setRole: (role: (typeof roles)[number]['value']) => void;
+  role: (typeof roles)[number]['value']; displayName: string; logout: () => void;
   hospitalId: string; setHospitalId: (id: string) => void; hospital: any; hospitals: any[];
   overview: any; doctors: any[]; availability: any[]; appointments: any[];
   selectedAppointmentId: string; setSelectedAppointmentId: (id: string) => void; appointmentDetail: any;
@@ -175,7 +170,7 @@ function Shell({ data, children }: { data: AppDataValue; children: ReactNode }) 
         <p className="text-[11px] leading-4 text-sidebar-foreground/55">Every access decision is logged and traceable.</p>
       </div>
       <div className="border-t border-sidebar-border px-4 py-4">
-        <div className="flex items-center gap-3"><div className="avatar avatar-small bg-sidebar-primary text-sidebar-primary-foreground">JC</div><div className="min-w-0"><div className="truncate text-xs font-semibold text-sidebar-foreground">Jordan Chen</div><div className="truncate text-[11px] text-sidebar-foreground/50">{role.label}</div></div><button className="ml-auto text-sidebar-foreground/50 hover:text-sidebar-primary" aria-label="Open profile" data-testid="button-profile"><ChevronDown size={15} /></button></div>
+        <div className="flex items-center gap-3"><div className="avatar avatar-small bg-sidebar-primary text-sidebar-primary-foreground">{initials(data.displayName)}</div><div className="min-w-0"><div className="truncate text-xs font-semibold text-sidebar-foreground">{data.displayName}</div><div className="truncate text-[11px] text-sidebar-foreground/50">{role.label}</div></div><button className="ml-auto text-sidebar-foreground/50 hover:text-sidebar-primary" aria-label="Sign out" title="Sign out" onClick={data.logout} data-testid="button-sign-out"><LogOut size={15} /></button></div>
       </div>
     </aside>
     {mobileOpen && <button className="sidebar-scrim md:hidden" onClick={() => setMobileOpen(false)} aria-label="Close menu" data-testid="button-sidebar-scrim" />}
@@ -186,9 +181,7 @@ function Shell({ data, children }: { data: AppDataValue; children: ReactNode }) 
         <div className="ml-auto flex items-center gap-2">
           <div className="health-chip"><span className={cn('health-dot', data.health?.status === 'ok' ? 'online' : '')} /> API {data.health?.status === 'ok' ? 'operational' : 'checking'}</div>
           <button className="icon-button" aria-label="Notifications" data-testid="button-notifications"><Bell size={17} /></button>
-          <select value={data.role} onChange={(event) => data.setRole(event.target.value as AppDataValue['role'])} className="role-select" data-testid="select-role">
-            {roles.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
-          </select>
+          <button className="button button-secondary button-small" onClick={data.logout} data-testid="button-topbar-sign-out"><LogOut size={13} /> Sign out</button>
         </div>
       </header>
       <div className="mx-auto max-w-[1500px] px-4 pb-12 sm:px-7 lg:px-10">{children}</div>
@@ -307,7 +300,19 @@ function AuditPage({ data }: { data: AppDataValue }) {
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
 
-function Router() {
+function AuthSplash() {
+  return <div className="noise-layer flex min-h-[100dvh] items-center justify-center bg-background">
+    <div className="flex flex-col items-center gap-3 text-muted-foreground">
+      <div className="brand-mark"><HeartPulse size={18} strokeWidth={2.5} /></div>
+      <div className="text-xs font-semibold uppercase tracking-[0.14em]">Restoring your session&hellip;</div>
+    </div>
+  </div>;
+}
+
+function AuthGate() {
+  const { actor, status } = useAuth();
+  if (status === 'checking') return <AuthSplash />;
+  if (!actor) return <Hero />;
   return <AppData>{(data) => <Shell data={data}><RoutedErrorBoundary><Switch>
     <Route path="/"><OverviewPage data={data} /></Route>
     <Route path="/patient"><PatientPage data={data} /></Route>
@@ -322,5 +327,7 @@ function Router() {
   </Switch></RoutedErrorBoundary></Shell>}</AppData>;
 }
 
-function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
+function App() {
+  return <QueryClientProvider client={queryClient}><TooltipProvider><AuthProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><AuthGate /></WouterRouter></AuthProvider><Toaster /></TooltipProvider></QueryClientProvider>;
+}
 export default App;
