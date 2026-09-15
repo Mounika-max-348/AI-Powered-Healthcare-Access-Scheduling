@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
+import { classifyPatientMessage } from "../lib/ai-agent";
 import {
   CreateDemoAppointmentBody,
   GetDemoAppointmentParams,
@@ -210,7 +211,7 @@ router.post("/demo/appointments/:appointmentId/reconcile", async (req, res) => {
   return res.json(result);
 });
 
-router.post("/demo/ai/message", (req, res) => {
+router.post("/demo/ai/message", async (req, res) => {
   const actor = actorFromRequest(req);
   requireRole(actor, "PATIENT", "DOCTOR", "HOSPITAL_ADMIN", "PLATFORM_ADMIN");
   const parsed = SendDemoAiMessageBody.parse(req.body);
@@ -223,6 +224,9 @@ router.post("/demo/ai/message", (req, res) => {
   let stage = "SAFE_REDIRECT";
   let suggestedSlots = slots.filter(() => false);
 
+  // Deterministic safety net: catches clinical questions even if the model
+  // is unavailable or misclassifies. This check always runs first and is
+  // never skipped, regardless of what the model would have said.
   if (/(diagnos|disease|what do i have|medication|prescri)/.test(lower)) {
     audit("AI_SAFETY_REDIRECT", actor, `Conversation ${parsed.conversationId}`, "SUCCESS", parsed.hospitalId ?? actor.hospitalId ?? "hospital-a", correlation);
   } else {
@@ -237,7 +241,44 @@ router.post("/demo/ai/message", (req, res) => {
         return res.status(409).json({ error: "The selected slot is not a currently bookable capability result." });
       }
     }
-    if (!parsed.selectedDoctorId && !parsed.selectedSlotId && /(shoulder|knee|back|doctor|appointment|see)/.test(lower)) {
+
+    const hospitalDoctors = doctors.filter((candidate) => candidate.hospitalId === hospitalId);
+    const availableSpecialties = [...new Set(hospitalDoctors.map((candidate) => candidate.specialty))];
+
+    // Ask Claude to classify the message only when the user hasn't already
+    // made an explicit choice via the UI (picking a doctor/slot is handled
+    // deterministically below — the model is never in that loop).
+    const classification = !parsed.selectedDoctorId && !parsed.selectedSlotId
+      ? await classifyPatientMessage(
+          parsed.message,
+          current.map((m) => ({ role: m.role as "user" | "assistant", text: m.text })),
+          availableSpecialties,
+        )
+      : null;
+
+    if (classification) {
+      intent = classification.intent;
+      stage = classification.stage;
+      reply = classification.reply;
+
+      if (intent === "SAFETY_REDIRECT") {
+        audit("AI_SAFETY_REDIRECT", actor, `Conversation ${parsed.conversationId}`, "SUCCESS", hospitalId, correlation);
+      } else {
+        const selectedDoctor = doctor
+          ?? hospitalDoctors.find((candidate) => candidate.specialty === classification.requestedSpecialty)
+          ?? hospitalDoctors.find((candidate) => candidate.specialty === "Orthopedics");
+        suggestedSlots = selectedDoctor
+          ? slots.filter((slot) => slot.doctorId === selectedDoctor.id && isLiveAvailableSlot(slot, selectedDoctor.id, hospitalId)).slice(0, 4)
+          : [];
+        const capability = intent === "BOOK_APPOINTMENT" ? "prepare_booking" : intent === "FIND_APPOINTMENT" ? "find_available_slots" : "ask_clarifying_question";
+        if (selectedDoctor && suggestedSlots.length) {
+          executeCapability(capability, actor, hospitalId, correlation);
+        }
+        audit("CAPABILITY_EXECUTED", actor, `capability:${capability}`, "SUCCESS", hospitalId, correlation);
+      }
+    } else if (!parsed.selectedDoctorId && !parsed.selectedSlotId && /(shoulder|knee|back|doctor|appointment|see)/.test(lower)) {
+      // Fallback rule-based path — used only when no ANTHROPIC_API_KEY is
+      // configured, or the model call failed, so the demo keeps working.
       intent = "FIND_APPOINTMENT";
       stage = "CLARIFICATION";
       reply = "I can help you find an appointment. What day works best, and would you prefer an in-person consultation? I’ll only show slots that are actually bookable.";
@@ -247,7 +288,7 @@ router.post("/demo/ai/message", (req, res) => {
         ? "BOOK_APPOINTMENT"
         : "FIND_APPOINTMENT";
       stage = intent === "BOOK_APPOINTMENT" ? "READY_TO_BOOK" : "DISCOVERY";
-      const selectedDoctor = doctor ?? doctors.find((candidate) => candidate.hospitalId === hospitalId && candidate.specialty === "Orthopedics");
+      const selectedDoctor = doctor ?? hospitalDoctors.find((candidate) => candidate.specialty === "Orthopedics");
       suggestedSlots = selectedDoctor
         ? slots.filter((slot) => slot.doctorId === selectedDoctor.id && isLiveAvailableSlot(slot, selectedDoctor.id, hospitalId)).slice(0, 4)
         : [];
